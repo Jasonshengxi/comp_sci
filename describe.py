@@ -162,11 +162,11 @@ def do_question(
                         break
 
                 j = char_index
-                while status[j] == "_":
+                while j < len(status) and status[j] == "_":
                     statuses[answer_index][j] = answers[answer_index][j]
                     j += 1
                 j = char_index - 1
-                while status[j] == "_":
+                while j >= 0 and status[j] == "_":
                     statuses[answer_index][j] = answers[answer_index][j]
                     j -= 1
 

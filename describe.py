@@ -1,8 +1,11 @@
-print("\x1b[?1049h")
+is_main = __name__ == "__main__"
+if is_main:
+    print("\x1b[?1049h")
 from typing import Any, Callable
 from colorama import Fore, Style
 
-print(Fore.CYAN, end="")
+if is_main:
+    print(Fore.CYAN, end="")
 print("Loading stdlib...")
 from time import time
 import json
@@ -267,5 +270,7 @@ def main():
             break
 
 
-if __name__ == "__main__":
+if is_main:
     main()
+else:
+    print("Ready.")

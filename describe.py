@@ -111,9 +111,9 @@ def do_question(
         begin = time()
         init_model()
         print("Cache not found. Embedding answers.")
-        data[question] = Question(
-            0, 0, answers, [model.encode(f"{question}: {answer}") for answer in answers]
-        )
+        if question not in data:
+            data[question] = Question(0, 0, answers, [])
+        data[question].embeddings = [model.encode(f"{question}: {answer}") for answer in answers] 
         took = time() - begin
         print(f"Took {Fore.BLUE}{round(took, 3)}{Fore.RESET}s to compute embeddings")
     else:

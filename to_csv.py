@@ -2,7 +2,9 @@ from openpyxl import load_workbook
 from openpyxl.cell import Cell, MergedCell
 import argparse
 
-parser = argparse.ArgumentParser(description="Extracts a csv file out of a table of an xlsx file")
+parser = argparse.ArgumentParser(
+    description="Extracts a csv file out of a table of an xlsx file"
+)
 
 parser.add_argument("table", nargs="?", default="Facts")
 args = parser.parse_args()

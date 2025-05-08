@@ -33,11 +33,13 @@ def embedding_similarity(x, y):
 
 model = None
 
+
 def encode(s: str):
     if model is not None:
         return model.encode(s)
     else:
         raise Exception("Model wasn't initialised.")
+
 
 ANSI_ESCAPE = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -\/]*[@-~]")
 
@@ -62,15 +64,19 @@ class Question:
     def success_rate(self) -> float:
         return self.successes / self.attempts if self.attempts else 0
 
-    def try_init_embeddings(self):
+    def try_init(self, question_data: dict[str, list[str]]):
         if not self.embeddings:
             self.init_embeddings()
+        if not self.answers:
+            self.answers = question_data[self.question]
 
     def init_embeddings(self):
         begin = time()
         init_model()
         print("Cache not found. Embedding answers.")
-        self.embeddings = [encode(f"{self.question}: {answer}") for answer in self.answers] 
+        self.embeddings = [
+            encode(f"{self.question}: {answer}") for answer in self.answers
+        ]
         took = time() - begin
         print(f"Took {Fore.BLUE}{round(took, 3)}{Fore.RESET}s to compute embeddings")
 
@@ -198,16 +204,17 @@ class AnswerStatus:
 
 def do_question_with_init(
     question_data: dict[str, list[str]], data: dict[str, Question], question: str
-    ):
+):
     if question not in data:
         data[question] = Question.default(question_data, question)
-    do_question(data[question])
+    do_question(question_data, data[question])
 
 
 def do_question(
+    question_data: dict[str, list[str]],
     question: Question,
 ):
-    question.try_init_embeddings()
+    question.try_init(question_data)
     question.attempts += 1
     statuses = AnswerStatus.new(question)
     while True:
@@ -243,13 +250,15 @@ def do_question(
             statuses.reveal_correct(response)
 
 
-def do_memorise(questions: list[Question]):
+def do_memorise(question_data: dict[str, list[str]], questions: list[Question]):
     for question in questions:
         AnswerStatus.new_correct(question).display()
         print()
     init_model()
 
-    m = input(f"{Fore.CYAN}Press enter once you're ready. (the questions will disappear){Fore.RESET}")
+    m = input(
+        f"{Fore.CYAN}Press enter once you're ready. (the questions will disappear){Fore.RESET}"
+    )
     if m:
         print(f"{Fore.RED}Memorise has been cancelled.{Fore.RESET}")
         return
@@ -257,7 +266,7 @@ def do_memorise(questions: list[Question]):
     clear_screen()
     random.shuffle(questions)
     for question in questions:
-        do_question(question)
+        do_question(question_data, question)
 
 
 def print_sorted(
@@ -358,12 +367,14 @@ def main():
             term_size = get_terminal_size()
             total_height = sum(len(question_data[q]) + 2 for q in qs) + 3
             if total_height >= term_size.lines:
-                print(f"{Fore.RED}The questions won't fit on the screen. Try fewer questions.{Fore.RESET}")
+                print(
+                    f"{Fore.RED}The questions won't fit on the screen. Try fewer questions.{Fore.RESET}"
+                )
             else:
                 for q in qs:
                     if q not in data:
                         data[q] = Question.default(question_data, q)
-                do_memorise([data[q] for q in qs])
+                do_memorise(question_data, [data[q] for q in qs])
 
 
 if is_main:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 is_main = __name__ == "__main__"
 if is_main:
     print("\x1b[?1049h")
@@ -11,10 +13,10 @@ from time import time
 import json
 from collections import defaultdict
 import os
-from os import path
+from os import get_terminal_size, path
 import atexit
 from string import ascii_letters
-from random import randint
+import random
 import pickle
 from dataclasses import dataclass
 import re
@@ -31,6 +33,12 @@ def embedding_similarity(x, y):
 
 model = None
 
+def encode(s: str):
+    if model is not None:
+        return model.encode(s)
+    else:
+        raise Exception("Model wasn't initialised.")
+
 ANSI_ESCAPE = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -\/]*[@-~]")
 
 
@@ -40,14 +48,31 @@ def escape_ansi(line):
 
 @dataclass
 class Question:
+    question: str
     attempts: int
     successes: int
     answers: list[str]
     embeddings: list
 
+    @staticmethod
+    def default(question_data: dict[str, list[str]], question: str) -> Question:
+        return Question(question, 0, 0, question_data[question], [])
+
     @property
     def success_rate(self) -> float:
         return self.successes / self.attempts if self.attempts else 0
+
+    def try_init_embeddings(self):
+        if not self.embeddings:
+            self.init_embeddings()
+
+    def init_embeddings(self):
+        begin = time()
+        init_model()
+        print("Cache not found. Embedding answers.")
+        self.embeddings = [encode(f"{self.question}: {answer}") for answer in self.answers] 
+        took = time() - begin
+        print(f"Took {Fore.BLUE}{round(took, 3)}{Fore.RESET}s to compute embeddings")
 
 
 DATA_PATH = "describe/data.p"
@@ -81,6 +106,10 @@ def load_questions() -> dict[str, list[str]]:
     return dict(questions)
 
 
+def clear_screen():
+    print("\x1b[2J")
+
+
 def hangman(x: str) -> str:
     out = ""
     for c in x:
@@ -103,87 +132,132 @@ def init_model():
         print(f"Took {Fore.BLUE}{round(time() - begin, 3)}{Fore.RESET}s")
 
 
-def do_question(
-    question_data: dict[str, list[str]], data: dict[str, Question], question: str
-):
-    answers = question_data[question]
-    if question not in data or not data[question].embeddings:
-        begin = time()
-        init_model()
-        print("Cache not found. Embedding answers.")
-        if question not in data:
-            data[question] = Question(0, 0, answers, [])
-        data[question].embeddings = [model.encode(f"{question}: {answer}") for answer in answers] 
-        took = time() - begin
-        print(f"Took {Fore.BLUE}{round(took, 3)}{Fore.RESET}s to compute embeddings")
-    else:
-        print("Cache found.")
-    data[question].attempts += 1
-    statuses = [list(hangman(answer)) for answer in answers]
-    die = False
-    while True:
-        print()
-        print(f"{Fore.RED}Q{Fore.RESET}: {Fore.YELLOW}{question}{Fore.RESET}")
-        for i, status in enumerate(statuses):
+@dataclass
+class AnswerStatus:
+    data: Question
+    statuses: list[list[str]]
+
+    @staticmethod
+    def new(data: Question) -> AnswerStatus:
+        return AnswerStatus(data, [list(hangman(answer)) for answer in data.answers])
+
+    @staticmethod
+    def new_correct(data: Question) -> AnswerStatus:
+        return AnswerStatus(data, [list(answer) for answer in data.answers])
+
+    def display(self):
+        print(f"{Fore.RED}Q{Fore.RESET}: {Fore.YELLOW}{self.data.question}{Fore.RESET}")
+        for i, status in enumerate(self.statuses):
             if "_" in status:
                 print(f"{Fore.BLUE}{i + 1}{Fore.RESET}. {"".join(status)}")
             else:
                 print(
                     f"{Fore.BLUE}{i + 1}{Fore.RESET}. {Fore.GREEN}{"".join(status)}{Fore.RESET}"
                 )
+
+    def reveal_word(self, answer_index: int, char_index: int):
+        status = self.statuses[answer_index]
+        j = char_index
+        while j < len(status) and status[j] == "_":
+            self.statuses[answer_index][j] = self.data.answers[answer_index][j]
+            j += 1
+        j = char_index - 1
+        while j >= 0 and status[j] == "_":
+            self.statuses[answer_index][j] = self.data.answers[answer_index][j]
+            j -= 1
+
+    def reveal_correct(self, response: str):
+        embedding = encode(f"{self.data.question}: {response}")
+        for i in range(len(self.statuses)):
+            answer_embedding = self.data.embeddings[i]
+            similarity = embedding_similarity(embedding, answer_embedding)
+            print(f"{i + 1} : {round(similarity * 100, 2)}%")
+            if similarity > 0.9:
+                self.reveal_answer(i)
+
+    def reveal_answer(self, index: int):
+        self.statuses[index] = list(self.data.answers[index])
+
+    def reveal_all(self):
+        self.statuses = [list(x) for x in self.data.answers]
+
+    def finished(self) -> bool:
+        return all("_" not in s for s in self.statuses)
+
+    def reveal_random_word(self):
+        while True:
+            answer_index = random.randint(0, len(self.statuses) - 1)
+            status = self.statuses[answer_index]
+            char_index = random.randint(0, len(status) - 1)
+
+            c = status[char_index]
+            if c == "_":
+                break
+        self.reveal_word(answer_index, char_index)
+
+
+def do_question_with_init(
+    question_data: dict[str, list[str]], data: dict[str, Question], question: str
+    ):
+    if question not in data:
+        data[question] = Question.default(question_data, question)
+    do_question(data[question])
+
+
+def do_question(
+    question: Question,
+):
+    question.try_init_embeddings()
+    question.attempts += 1
+    statuses = AnswerStatus.new(question)
+    while True:
+        print()
+        statuses.display()
         print()
         init_model()
 
-        if die:
-            break
-        if all("_" not in s for s in statuses):
-            data[question].successes += 1
+        if statuses.finished():
+            question.successes += 1
             break
         response = input(">> ")
-        print("\x1b[2J")
+        clear_screen()
         if response.lower() == "i give up":
-            statuses = [list(a) for a in answers]
-            die = True
+            statuses.reveal_all()
+            statuses.display()
+            break
         elif response.lower().startswith("hint"):
             last_part = response.rsplit(" ", maxsplit=1)[-1]
-            x = 1
             try:
                 x = int(last_part)
             except:
-                pass
+                x = 1
 
             for _ in range(x):
-                if all("_" not in s for s in statuses):
+                if statuses.finished():
                     break
-                while True:
-                    answer_index = randint(0, len(answers) - 1)
-                    status = statuses[answer_index]
-                    char_index = randint(0, len(status) - 1)
-
-                    c = status[char_index]
-                    if c == "_":
-                        break
-
-                j = char_index
-                while j < len(status) and status[j] == "_":
-                    statuses[answer_index][j] = answers[answer_index][j]
-                    j += 1
-                j = char_index - 1
-                while j >= 0 and status[j] == "_":
-                    statuses[answer_index][j] = answers[answer_index][j]
-                    j -= 1
-
+                statuses.reveal_random_word()
         elif response.lower() == "skip":
-            data[question].attempts -= 1
+            question.attempts -= 1
             break
         else:
-            embedding = model.encode(f"{question}: {response}")
-            for i in range(len(answers)):
-                answer_embedding = data[question].embeddings[i]
-                similarity = embedding_similarity(embedding, answer_embedding)
-                print(f"{i + 1} : {round(similarity * 100, 2)}%")
-                if similarity > 0.9:
-                    statuses[i] = list(answers[i])
+            statuses.reveal_correct(response)
+
+
+def do_memorise(questions: list[Question]):
+    for question in questions:
+        AnswerStatus.new_correct(question).display()
+        print()
+    init_model()
+
+    m = input(f"{Fore.CYAN}Press enter once you're ready. (the questions will disappear){Fore.RESET}")
+    if m:
+        print(f"{Fore.RED}Memorise has been cancelled.{Fore.RESET}")
+        return
+
+    clear_screen()
+    random.shuffle(questions)
+    for question in questions:
+        do_question(question)
 
 
 def print_sorted(
@@ -244,33 +318,59 @@ def main():
             f"{Fore.YELLOW}{round(x.success_rate * 100, 2)}%{Fore.RESET}",
         ]
 
+    last_response = ""
     while True:
         response = input("> ").lower()
-        print("\x1b[2J")
+        clear_screen()
+
+        if not response:
+            response = last_response
+        else:
+            last_response = response
 
         if response == "print":
             print_sorted(data, lambda x: x.success_rate, other_columns)
         elif response == "random":
-            index = randint(0, len(questions) - 1)
-            do_question(question_data, data, questions[index])
+            index = random.randint(0, len(questions) - 1)
+            do_question_with_init(question_data, data, questions[index])
         elif response == "unseen":
             while True:
-                index = randint(0, len(questions) - 1)
+                index = random.randint(0, len(questions) - 1)
                 if questions[index] in data:
                     continue
                 break
-            do_question(question_data, data, questions[index])
+            do_question_with_init(question_data, data, questions[index])
         elif response == "seen":
             while True:
-                index = randint(0, len(questions) - 1)
+                index = random.randint(0, len(questions) - 1)
                 if questions[index] in data:
                     break
-            do_question(question_data, data, questions[index])
+            do_question_with_init(question_data, data, questions[index])
         elif response == "bye":
             break
+        elif response.startswith("memorise"):
+            last_part = response.rsplit(" ", maxsplit=1)[-1]
+            try:
+                x = int(last_part)
+            except:
+                x = 1
+            qs = random.choices(questions, k=x)
+            term_size = get_terminal_size()
+            total_height = sum(len(question_data[q]) + 2 for q in qs) + 3
+            if total_height >= term_size.lines:
+                print(f"{Fore.RED}The questions won't fit on the screen. Try fewer questions.{Fore.RESET}")
+            else:
+                for q in qs:
+                    if q not in data:
+                        data[q] = Question.default(question_data, q)
+                do_memorise([data[q] for q in qs])
 
 
 if is_main:
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(e)
+        input(f"{Fore.RED}it crashed.{Fore.RESET}")
 else:
     print("Ready.")
